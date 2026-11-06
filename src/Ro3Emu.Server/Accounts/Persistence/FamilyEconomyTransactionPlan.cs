@@ -114,7 +114,7 @@ internal sealed class FamilyEconomyTransactionPlan(RoleItemPlan child, EconomyMu
         using (var meta = DbSql.Command(db, tx, "SELECT realm_id FROM economy_meta WHERE singleton=1"))
             realm = meta.ExecuteScalar() as string ?? throw new InvalidDataException("Missing economy realm.");
         var before = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);
-        var receipts = (object?[])child.Execute(execution);
+        var receipts = (object?[])execution.Run(child)!;
         ValidateResults(receipts);
         var after = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);
         var legs = BuildLegs(before, after);

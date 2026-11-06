@@ -89,7 +89,7 @@ internal sealed class EconomyEnvelopePlan(RoleItemPlan child, EconomyEnvelope en
         var generatedEntities = new HashSet<OwnerRevisionKey>();
         var (before, standing) = Read(db, tx);
         foreach (var issue in standing) DbWriter.ReportStandingIssue(issue);
-        var children = (object?[])child.Execute(execution);
+        var children = (object?[])execution.Run(child)!;
         EconomyTransactionPlan.EncodeChildReceipts(children); // Reject any non-durable child result before receipt work.
         // Guild creation obtains its owner ID inside the writer. Its initial revision is inserted by
         // GuildSavePlan, rather than by RevisionStore.Bump, so record that creation explicitly.

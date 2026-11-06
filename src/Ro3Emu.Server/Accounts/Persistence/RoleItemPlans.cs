@@ -53,12 +53,12 @@ internal sealed class RoleItemPlan : DbPlan
     internal override object Execute(DbPlanExecution execution)
     {
         var db = execution.Connection;
-        foreach (var guard in _guards) { DbWriteGuard.Plan(db, guard); guard.Execute(execution); }
+        foreach (var guard in _guards) { DbWriteGuard.Plan(db, guard); execution.Run(guard); }
         var receipts = new object?[_parts.Length];
         for (int i = 0; i < _parts.Length; i++)
         {
             DbWriteGuard.Plan(db, _parts[i]);
-            receipts[i] = _parts[i].Execute(execution);
+            receipts[i] = execution.Run(_parts[i]);
         }
         return receipts;
     }

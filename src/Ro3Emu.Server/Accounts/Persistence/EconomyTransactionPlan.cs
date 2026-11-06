@@ -100,7 +100,7 @@ internal sealed class EconomyTransactionPlan(RoleItemPlan child, EconomyMutation
         var before = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);
         EconomyRoleProgress? beforeProgress = mutation.RewardEvidence is null
             ? null : EconomyRoleProgressRead.Read(db, tx, mutation.ActorRoleId);
-        var receipts = (object?[])child.Execute(execution);
+        var receipts = (object?[])execution.Run(child)!;
         ValidateChildReceipts(receipts, child.Parts[0] is ItemDeltaWritePlan committedDelta
             ? committedDelta.ExpectedReceiptCount : -1, mutation.CommandKind);
         var after = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);

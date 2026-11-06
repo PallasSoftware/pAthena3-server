@@ -94,7 +94,7 @@ internal sealed class EventEconomyTransactionPlan(RoleItemPlan child, EventEcono
         var entities = EntityWrites.Concat(EntityDeltaWrites).Distinct().ToArray();
         var entityBefore = entities.Select(key => (OwnerRevisionValue)new OwnerRevisionReadPlan(key).Execute(db, tx)).ToArray();
         var before = EconomySnapshotReader.ReadEventHoldings(db, tx, mutation.Catalog, RoleWrites, entities);
-        var result = (object?[])child.Execute(execution);
+        var result = (object?[])execution.Run(child)!;
         var after = EconomySnapshotReader.ReadEventHoldings(db, tx, mutation.Catalog, RoleWrites, entities);
         var legs = BuildLegs(before, after, mutation);
         if (legs.Count == 0) throw new InvalidOperationException("Event economy envelope must explain an economic movement.");

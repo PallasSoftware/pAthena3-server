@@ -57,7 +57,7 @@ internal sealed class EscrowEconomyTransactionPlan(RoleItemPlan child, EscrowEco
             realm = meta.ExecuteScalar() as string ?? throw new InvalidDataException("Missing E03 economy realm.");
         var scope = Scope(null);
         var before = EconomySnapshotReader.ReadEscrowScope(db, tx, scope, catalog);
-        var receipts = (object?[])child.Execute(execution);
+        var receipts = (object?[])execution.Run(child)!;
         EscrowEconomyReceiptCodec.Validate(child, receipts);
         var expanded = Scope(receipts);
         var after = EconomySnapshotReader.ReadEscrowScope(db, tx, expanded, catalog);

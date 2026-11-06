@@ -7,15 +7,21 @@ namespace Ro3Emu.Server.Accounts.Persistence;
 /// which bypass SaveChanges. No SQL text parsing and no change to coordinator/legacy permissions.</summary>
 internal sealed class EfCoordinationGuard : DbCommandInterceptor
 {
+    private static void Begin(DbCommand command, CommandEventData eventData)
+    {
+        bool tracked = eventData.CommandSource == CommandSource.SaveChanges;
+        if (tracked && eventData.Context is GameDbContext context) context.ValidateWrites();
+        DbWriteGuard.EfCommand(command.Connection, true, tracked);
+    }
     public override InterceptionResult<DbDataReader> ReaderExecuting(DbCommand command, CommandEventData eventData,
         InterceptionResult<DbDataReader> result)
-    { DbWriteGuard.EfCommand(command.Connection, true); return result; }
+    { Begin(command, eventData); return result; }
     public override InterceptionResult<int> NonQueryExecuting(DbCommand command, CommandEventData eventData,
         InterceptionResult<int> result)
-    { DbWriteGuard.EfCommand(command.Connection, true); return result; }
+    { Begin(command, eventData); return result; }
     public override InterceptionResult<object> ScalarExecuting(DbCommand command, CommandEventData eventData,
         InterceptionResult<object> result)
-    { DbWriteGuard.EfCommand(command.Connection, true); return result; }
+    { Begin(command, eventData); return result; }
     public override DbDataReader ReaderExecuted(DbCommand command, CommandExecutedEventData eventData, DbDataReader result)
     { DbWriteGuard.EfCommand(command.Connection, false); return result; }
     public override int NonQueryExecuted(DbCommand command, CommandExecutedEventData eventData, int result)

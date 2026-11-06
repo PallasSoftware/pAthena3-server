@@ -40,9 +40,14 @@ public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : DbC
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
         optionsBuilder.AddInterceptors(new EfCoordinationGuard());
 
-    private void ValidateWrites()
+    internal IReadOnlySet<string>? AllowedRealmWrites { get; set; }
+
+    internal void ValidateWrites()
     {
         ChangeTracker.DetectChanges();
+        if (AllowedRealmWrites is { } allowed && ChangeTracker.Entries<RealmStateRow>().Any(entry =>
+            entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted && !allowed.Contains(entry.Entity.Key)))
+            throw new InvalidOperationException("EF attempted an undeclared realm-state mutation.");
         if (ChangeTracker.Entries().Any(entry => entry.Entity is OwnerRevisionRow or OwnerReceiptRow
             && entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Revisions and receipts belong to the transaction coordinator, not EF plans.");

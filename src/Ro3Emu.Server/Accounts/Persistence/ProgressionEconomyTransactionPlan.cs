@@ -110,7 +110,7 @@ internal sealed class ProgressionEconomyTransactionPlan(RoleItemPlan child, Econ
         using (var meta = DbSql.Command(db, tx, "SELECT realm_id FROM economy_meta WHERE singleton=1"))
             realm = meta.ExecuteScalar() as string ?? throw new InvalidDataException("Missing economy realm.");
         var before = ReadHoldings(db, tx);
-        var receipts = (object?[])child.Execute(execution);
+        var receipts = (object?[])execution.Run(child)!;
         ValidateResults(receipts);
         var after = ReadHoldings(db, tx);
         var legs = BuildLegs(before, after);

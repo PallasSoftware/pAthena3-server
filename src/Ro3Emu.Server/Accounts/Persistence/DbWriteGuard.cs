@@ -21,6 +21,7 @@ internal static class DbWriteGuard
         internal string Source = source;
         internal bool RoleWriteAuthorized;
         internal bool EfCommand;
+        internal bool EfTrackedSave;
     }
     private static readonly ConditionalWeakTable<SqliteConnection, State> States = [];
     private static readonly delegate_authorizer Authorizer = Authorize;
@@ -71,10 +72,13 @@ internal static class DbWriteGuard
         }
     }
 
-    internal static void EfCommand(System.Data.Common.DbConnection? connection, bool executing)
+    internal static void EfCommand(System.Data.Common.DbConnection? connection, bool executing, bool trackedCommand = false)
     {
         if (connection is SqliteConnection db && States.TryGetValue(db, out var state))
+        {
             state.EfCommand = executing;
+            state.EfTrackedSave = executing && trackedCommand;
+        }
     }
 
     internal static void RefuseAsyncEfCommand(System.Data.Common.DbConnection? connection)
@@ -115,6 +119,11 @@ internal static class DbWriteGuard
             }
             if (!write) return raw.SQLITE_OK;
             int thread = Environment.CurrentManagedThreadId;
+            if (state.EfCommand && write && first.utf8_to_string() == "server_state" && !state.EfTrackedSave)
+            {
+                state.Metrics.WriteDenied(state.Source, action, "server_state", thread);
+                return raw.SQLITE_DENY;
+            }
             if (state.EfCommand && write
                 && (first.utf8_to_string() is "owner_revision" or "owner_operation_receipt"
                     || action == raw.SQLITE_ALTER_TABLE && second.utf8_to_string() is "owner_revision" or "owner_operation_receipt"))

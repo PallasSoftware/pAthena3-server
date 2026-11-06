@@ -152,7 +152,7 @@ public sealed class EfPersistenceTests : IDisposable
         internal override object Execute(DbPlanExecution execution)
         {
             var context = execution.Game;
-            return RealmStatePersistence.Write(context, "forbidden", "value");
+            return context.Database.ExecuteSqlRaw("UPDATE server_state SET value='forbidden'");
         }
     }
 
@@ -280,6 +280,45 @@ public sealed class EfPersistenceTests : IDisposable
         plan.ExpectEntities([Revision(store)]);
         await Assert.ThrowsAsync<IOException>(() => store.WriteAsync<object?[]>(plan));
         Assert.False(Revision(store).Exists);
+    }
+
+    private sealed class UndeclaredRealmWrite(string mode) : DbPlan
+    {
+        internal override int Bytes => 1;
+        internal override string Label => "test/ef-undeclared-key";
+        internal override IReadOnlyList<OwnerRevisionKey> EntityWrites => [RevisionStore.Entity("server_state", "declared")];
+        internal override object Execute(DbPlanExecution execution)
+        {
+            var context = execution.Game;
+            return mode switch
+            {
+                "tracked" => RealmStatePersistence.Write(context, "other", "forbidden"),
+                "bulk" => context.RealmState.ExecuteDelete(),
+                "raw" => context.Database.ExecuteSqlRaw("DELETE FROM server_state"),
+                "thread" => Task.Run(() => RealmStatePersistence.Write(context, "declared", "forbidden")).GetAwaiter().GetResult(),
+                _ => throw new InvalidOperationException("Unknown test mode.")
+            };
+        }
+    }
+
+    [Theory]
+    [InlineData("tracked")]
+    [InlineData("bulk")]
+    [InlineData("raw")]
+    [InlineData("thread")]
+    public async Task EfRealmWritesMustMatchThePlanAndStayOnTheWriterThread(string mode)
+    {
+        using var store = Store();
+        await Write(store, "preserve");
+        var error = await Record.ExceptionAsync(() => store.WriteLegacyAsync<int>(new UndeclaredRealmWrite(mode)));
+        if (mode == "tracked") Assert.IsType<InvalidOperationException>(error);
+        else
+        {
+            var native = error is DbUpdateException wrapped ? wrapped.InnerException : error;
+            Assert.Equal(23, Assert.IsType<SqliteException>(native).SqliteErrorCode);
+        }
+        Assert.Equal("preserve", await Read(store));
+        Assert.False(store.ReadSync<OwnerRevisionValue>(new OwnerRevisionReadPlan(RevisionStore.Entity("server_state", "declared"))).Exists);
     }
 
     private sealed class ProbeFactory(SaveProbe probe) : IDbContextFactory<GameDbContext>
