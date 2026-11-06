@@ -161,6 +161,15 @@ internal static class DbWriteGuard
             }
             if (!write) return raw.SQLITE_OK;
             int thread = Environment.CurrentManagedThreadId;
+            bool schema = action is >= raw.SQLITE_CREATE_INDEX and <= raw.SQLITE_CREATE_VIEW
+                or >= raw.SQLITE_DROP_INDEX and <= raw.SQLITE_DROP_VIEW
+                or raw.SQLITE_ALTER_TABLE or raw.SQLITE_REINDEX or raw.SQLITE_ANALYZE
+                or raw.SQLITE_CREATE_VTABLE or raw.SQLITE_DROP_VTABLE or raw.SQLITE_ATTACH or raw.SQLITE_DETACH;
+            if (state.EfCommand && (schema || action == raw.SQLITE_PRAGMA && write))
+            {
+                state.Metrics.WriteDenied(state.Source, action, first.utf8_to_string() ?? "", thread);
+                return raw.SQLITE_DENY;
+            }
             if (state.EfCommand && write && first.utf8_to_string() == "server_state" && !state.EfTrackedSave)
             {
                 state.Metrics.WriteDenied(state.Source, action, "server_state", thread);
