@@ -16,6 +16,7 @@ public sealed class DbWriter : IDisposable
     private readonly Thread _thread;
     private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly IDbContextFactory<GameDbContext>? _contexts;
+    private readonly IReadOnlySet<string>? _managedTables;
     private readonly string _connectionString;
     private readonly ServerMetrics? _serverMetrics;
     private readonly DbAccessMetrics _metrics;
@@ -32,9 +33,10 @@ public sealed class DbWriter : IDisposable
     private sealed record Job(DbPlan Plan, bool Lazy, TaskCompletionSource<object?> Done, long EnqueuedAt);
 
     public DbWriter(string connectionString, DbAccessMetrics metrics, ServerMetrics? serverMetrics = null, ILogger? log = null,
-        TimeSpan? stopTimeout = null, IDbContextFactory<GameDbContext>? contexts = null)
+        TimeSpan? stopTimeout = null, IDbContextFactory<GameDbContext>? contexts = null, IReadOnlySet<string>? managedTables = null)
     {
         _contexts = contexts;
+        _managedTables = managedTables;
         _connectionString = connectionString;
         _metrics = metrics;
         _serverMetrics = serverMetrics;
@@ -229,7 +231,7 @@ public sealed class DbWriter : IDisposable
                     !OperationReceipts.TryRead(db, tx, id, out pending.Result)))
             {
                 var deltaRevisions = RevisionStore.Check(db, tx, plan);
-                using var execution = new DbPlanExecution(db, tx, _contexts);
+                using var execution = new DbPlanExecution(db, tx, _contexts, _managedTables);
                 pending.Result = execution.Run(plan);
                 RevisionStore.Bump(db, tx, plan, pending.Result, deltaRevisions);
                 if (plan.OperationId != null && !plan.OwnsOperationReceipt)

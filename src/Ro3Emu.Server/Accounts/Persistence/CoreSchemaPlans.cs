@@ -8,8 +8,10 @@ internal sealed class RoleSchemaPlan : DbPlan
     internal override int Bytes => 128;
     internal override string Label => "schema/role";
     internal override bool AllowsUnversionedRoleMutation => true;
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(DbPlanExecution execution)
     {
+        var db = execution.Connection;
+        var tx = execution.Transaction;
         SchemaSql.Execute(db, tx, """
             CREATE TABLE IF NOT EXISTS role (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,8 +26,9 @@ internal sealed class RoleSchemaPlan : DbPlan
                 last_login_time INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS role_account ON role(account);
-            CREATE TABLE IF NOT EXISTS server_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """);
+        if (!execution.SchemaOwnedExternally("server_state"))
+            SchemaSql.Execute(db, tx, "CREATE TABLE IF NOT EXISTS server_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
         SchemaSql.AddColumn(db, tx, "role", "scene_entry", $"INTEGER NOT NULL DEFAULT {SpawnSceneEntry}");
         SchemaSql.AddColumn(db, tx, "role", "pos_x", $"REAL NOT NULL DEFAULT {SpawnX}");
         SchemaSql.AddColumn(db, tx, "role", "pos_y", "REAL NOT NULL DEFAULT 0");
@@ -180,6 +183,11 @@ internal sealed class RoleSchemaPlan : DbPlan
                 epoch INTEGER NOT NULL CHECK(epoch > 0),
                 deleted INTEGER NOT NULL CHECK(deleted IN (0,1))
             );
+            INSERT OR IGNORE INTO role_lifecycle(role_id,epoch,deleted)
+                SELECT id,1,CASE WHEN deleted_time=0 THEN 0 ELSE 1 END FROM role;
+            """);
+        if (!execution.SchemaOwnedExternally("owner_revision"))
+            SchemaSql.Execute(db, tx, """
             CREATE TABLE IF NOT EXISTS owner_revision (
                 kind TEXT NOT NULL,
                 id TEXT NOT NULL,
@@ -187,8 +195,6 @@ internal sealed class RoleSchemaPlan : DbPlan
                 revision INTEGER NOT NULL CHECK(revision >= 0),
                 PRIMARY KEY(kind,id,part)
             );
-            INSERT OR IGNORE INTO role_lifecycle(role_id,epoch,deleted)
-                SELECT id,1,CASE WHEN deleted_time=0 THEN 0 ELSE 1 END FROM role;
             """);
         // Backfill every existing role before the server admits connections. Each blob is
         // a separate storage part; progress deliberately excludes settings and position.

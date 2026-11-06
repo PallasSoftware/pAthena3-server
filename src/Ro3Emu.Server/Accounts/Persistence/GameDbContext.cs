@@ -105,6 +105,10 @@ public static class RealmStatePersistence
 
     public static int Write(GameDbContext context, string key, string value)
     {
+        // SQL Server pads trailing spaces for equality and bounds nvarchar keys by UTF-16 units.
+        // Keep SQLite's existing key semantics; this is not an automatic cross-provider conversion.
+        if (context.Database.ProviderName == "Microsoft.EntityFrameworkCore.SqlServer" && (key.Length > 256 || key.EndsWith(' ')))
+            throw new ArgumentException("Realm-state key is not lossless on SQL Server.", nameof(key));
         var row = context.RealmState.Find(key);
         if (row is null) context.RealmState.Add(new RealmStateRow { Key = key, Value = value });
         else

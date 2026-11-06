@@ -6,11 +6,17 @@ internal sealed class SeasonStateSchemaPlan : DbPlan
 {
     internal override int Bytes => 128;
     internal override string Label => "season/schema";
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(DbPlanExecution execution)
     {
-        using var cmd = DbSql.Command(db, tx,
-            "CREATE TABLE IF NOT EXISTS server_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-        int changed = cmd.ExecuteNonQuery();
+        var db = execution.Connection;
+        var tx = execution.Transaction;
+        int changed = 0;
+        if (!execution.SchemaOwnedExternally("server_state"))
+        {
+            using var cmd = DbSql.Command(db, tx,
+                "CREATE TABLE IF NOT EXISTS server_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+            changed = cmd.ExecuteNonQuery();
+        }
         SchemaSql.Execute(db, tx, """
             INSERT OR IGNORE INTO owner_revision(kind,id,part,revision)
                 SELECT 'server_state',key,'state',0 FROM server_state

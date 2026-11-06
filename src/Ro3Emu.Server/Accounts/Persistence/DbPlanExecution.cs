@@ -6,10 +6,11 @@ namespace Ro3Emu.Server.Accounts.Persistence;
 /// <summary>One worker job and its nested children share one lazily enlisted EF context.
 /// Disposal at the job boundary discards tracking before the writer rolls back its savepoint.</summary>
 internal sealed class DbPlanExecution(SqliteConnection connection, SqliteTransaction transaction,
-    IDbContextFactory<GameDbContext>? factory) : IDisposable
+    IDbContextFactory<GameDbContext>? factory, IReadOnlySet<string>? managedTables = null) : IDisposable
 {
     internal SqliteConnection Connection { get; } = connection;
     internal SqliteTransaction Transaction { get; } = transaction;
+    internal bool SchemaOwnedExternally(string table) => managedTables?.Contains(table) == true;
     private GameDbContext? _game;
     internal GameDbContext Game => _game ??= GameDbContext.Borrow(Connection, Transaction,
         factory ?? throw new InvalidOperationException("An EF plan requires a registered GameDbContext factory."));

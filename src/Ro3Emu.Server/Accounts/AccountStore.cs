@@ -17,6 +17,7 @@ public sealed partial class AccountStore : IDisposable
 {
     private readonly string _connectionString;
     private readonly string _databasePath;
+    private readonly IReadOnlySet<string> _managedTables;
     private readonly Lazy<EconomyCatalog> _escrowCatalog;
     internal EconomyCatalog EscrowCatalog => _escrowCatalog.Value;
     private readonly Lazy<EconomyCatalog> _economyCatalog;
@@ -51,7 +52,7 @@ public sealed partial class AccountStore : IDisposable
     private readonly Diagnostics.ServerMetrics? _metrics;
 
     public AccountStore(IOptions<ServerOptions> options, Diagnostics.ServerMetrics? metrics = null, Game.GameLoop? loop = null,
-        ILogger<AccountStore>? log = null, IDbContextFactory<GameDbContext>? contexts = null)
+        ILogger<AccountStore>? log = null, IDbContextFactory<GameDbContext>? contexts = null, IRealmSchemaPolicy? schemaPolicy = null)
     {
         contexts ??= new SqliteGameContextFactory(); // Explicit SQLite composition for directly constructed stores.
         _metrics = metrics;
@@ -60,6 +61,7 @@ public sealed partial class AccountStore : IDisposable
         _log = log;
         // A half-done restore may have moved the live file away; opening now would create an empty realm (C/D 19).
         DatabaseRestore.ThrowIfUnfinished(options.Value.DataDir);
+        _managedTables = RealmSchemaOwnership.Inspect(Path.Combine(options.Value.DataDir, "ro3emu.db"), schemaPolicy);
         PrivateFiles.Directory(options.Value.DataDir);
         _databasePath = Path.Combine(options.Value.DataDir, "ro3emu.db");
         _escrowCatalog = new Lazy<EconomyCatalog>(() =>
@@ -100,6 +102,11 @@ public sealed partial class AccountStore : IDisposable
                 account     TEXT NOT NULL,
                 expires_utc INTEGER NOT NULL
             );
+            """;
+        cmd.ExecuteNonQuery();
+        if (!_managedTables.Contains("owner_revision"))
+        {
+            cmd.CommandText = """
             CREATE TABLE IF NOT EXISTS owner_revision (
                 kind TEXT NOT NULL,
                 id TEXT NOT NULL,
@@ -107,14 +114,21 @@ public sealed partial class AccountStore : IDisposable
                 revision INTEGER NOT NULL CHECK(revision >= 0),
                 PRIMARY KEY(kind,id,part)
             );
+            """;
+            cmd.ExecuteNonQuery();
+        }
+        if (!_managedTables.Contains("owner_operation_receipt"))
+        {
+            cmd.CommandText = """
             CREATE TABLE IF NOT EXISTS owner_operation_receipt (
                 operation_id TEXT PRIMARY KEY,
                 family TEXT NOT NULL,
                 result BLOB NOT NULL
             );
             """;
-        cmd.ExecuteNonQuery();
-        _writer = new(() => new DbWriter(_connectionString, AccessMetrics, _metrics, _log, contexts: contexts)
+            cmd.ExecuteNonQuery();
+        }
+        _writer = new(() => new DbWriter(_connectionString, AccessMetrics, _metrics, _log, contexts: contexts, managedTables: _managedTables)
         { RoleWritesCommitted = Snapshots.Committed, Caches = Caches, StandingIssue = ReportStandingEconomyIssue });
         _readers = new(() => new DbReadPool(_databasePath, AccessMetrics, _metrics, _log, contexts: contexts));
         foreach (var plan in DatabaseSchema.Plans()) WriteSync<int>(plan);

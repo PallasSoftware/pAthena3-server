@@ -6,6 +6,10 @@ public static partial class EconomySnapshotReader
     // An added table/column, including non-BLOB assets, is an inventory change requiring review.
     private static readonly Dictionary<string, string> KnownColumns = new(StringComparer.Ordinal)
     {
+        // Operational metadata, never economic holdings; unexpected columns still fail classification.
+        ["__EFMigrationsHistory"] = "MigrationId ProductVersion",
+        ["__EFMigrationsLock"] = "Id Timestamp",
+        ["__GameSchemaOwnership"] = "scope baseline",
         ["account"] = "name password_hash salt created_utc",
         ["auth_token"] = "token kind account expires_utc",
         ["account_ban"] = "account reason banned_utc until_utc banned_by",
