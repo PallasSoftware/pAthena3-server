@@ -22,6 +22,7 @@ internal static class DbWriteGuard
         internal bool RoleWriteAuthorized;
         internal bool EfCommand;
         internal bool EfTrackedSave;
+        internal int PlanDepth;
     }
     private static readonly ConditionalWeakTable<SqliteConnection, State> States = [];
     private static readonly delegate_authorizer Authorizer = Authorize;
@@ -72,6 +73,42 @@ internal static class DbWriteGuard
         }
     }
 
+    /// <summary>Every job/child borrows authority, never the right to complete its enclosing transaction.
+    /// Keep the native fence active even when EF exposes GetDbTransaction or direct native commands.</summary>
+    internal static IDisposable PlanExecution(SqliteConnection db)
+    {
+        States.TryGetValue(db, out var state);
+        return new ExecutionScope(state);
+    }
+
+    private sealed class ExecutionScope : IDisposable
+    {
+        private State? _state;
+        internal ExecutionScope(State? state)
+        {
+            _state = state;
+            if (state is not null) state.PlanDepth++;
+        }
+        public void Dispose()
+        {
+            if (_state is { } state) { state.PlanDepth--; _state = null; }
+        }
+    }
+
+    /// <summary>SqliteTransaction.Rollback completes its managed wrapper even if authorization refuses it.
+    /// After worker disposal, clean up any remaining native transaction before another job can begin.</summary>
+    internal static void RollbackOrphanedTransaction(SqliteConnection db)
+    {
+        if (raw.sqlite3_get_autocommit(db.Handle ?? throw new InvalidOperationException("Worker connection is closed.")) != 0) return;
+        using var command = db.CreateCommand();
+        command.CommandText = "ROLLBACK";
+        command.ExecuteNonQuery();
+    }
+    internal static void AssertTransactionControlAllowed(System.Data.Common.DbConnection? connection)
+    {
+        if (connection is SqliteConnection db && States.TryGetValue(db, out var state) && state.PlanDepth != 0)
+            throw new InvalidOperationException("Only the worker may control a plan's transaction and savepoints.");
+    }
     internal static void EfCommand(System.Data.Common.DbConnection? connection, bool executing, bool trackedCommand = false)
     {
         if (connection is SqliteConnection db && States.TryGetValue(db, out var state))
@@ -105,6 +142,11 @@ internal static class DbWriteGuard
         try
         {
             state = (State)user;
+            if (state.PlanDepth != 0 && action is raw.SQLITE_TRANSACTION or raw.SQLITE_SAVEPOINT)
+            {
+                state.Metrics.WriteDenied(state.Source, action, first.utf8_to_string() ?? "", Environment.CurrentManagedThreadId);
+                return raw.SQLITE_DENY;
+            }
             bool write = action is >= raw.SQLITE_CREATE_INDEX and <= raw.SQLITE_DELETE
                 or >= raw.SQLITE_DROP_INDEX and <= raw.SQLITE_INSERT
                 or raw.SQLITE_UPDATE or raw.SQLITE_ATTACH or raw.SQLITE_DETACH or raw.SQLITE_ALTER_TABLE

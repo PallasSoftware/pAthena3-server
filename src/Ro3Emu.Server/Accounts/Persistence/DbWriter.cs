@@ -206,7 +206,11 @@ public sealed class DbWriter : IDisposable
             groupError ??= e;
             if (group.Count == 0) group.Add(new Pending(first)); // BEGIN itself failed: the job still completes
         }
-        finally { tx?.Dispose(); }
+        finally
+        {
+            try { tx?.Dispose(); }
+            finally { DbWriteGuard.RollbackOrphanedTransaction(db); }
+        }
         foreach (var pending in group) Finish(db, pending, groupError);
     }
 

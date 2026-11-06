@@ -107,6 +107,7 @@ public sealed class DbReadPool : IDisposable
                 catch (Exception caught) { error = caught; }
                 finally
                 {
+                    DbWriteGuard.RollbackOrphanedTransaction(db);
                     lock (_gate) _active[worker] = null;
                     _metrics.ReaderFinished(success);
                 }

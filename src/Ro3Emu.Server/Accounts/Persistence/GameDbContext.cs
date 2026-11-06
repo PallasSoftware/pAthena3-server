@@ -38,7 +38,7 @@ public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : DbC
     }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
-        optionsBuilder.AddInterceptors(new EfCoordinationGuard());
+        optionsBuilder.AddInterceptors(new EfCoordinationGuard(), new EfTransactionGuard());
 
     internal IReadOnlySet<string>? AllowedRealmWrites { get; set; }
 

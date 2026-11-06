@@ -26,6 +26,7 @@ internal sealed class DbPlanExecution(SqliteConnection connection, SqliteTransac
 
     internal object? Run(DbPlan plan)
     {
+        using var authority = DbWriteGuard.PlanExecution(Connection);
         var previous = _realmWrites;
         _realmWrites = plan.EntityWrites.Concat(plan.EntityDeltaWrites)
             .Where(key => key.Kind == "server_state" && key.Part == "state").Select(key => key.Id)
@@ -39,7 +40,11 @@ internal sealed class DbPlanExecution(SqliteConnection connection, SqliteTransac
         }
     }
 
-    internal object? Run(DbReadPlan plan) => NativeErrors(() => plan.Execute(this));
+    internal object? Run(DbReadPlan plan)
+    {
+        using var authority = DbWriteGuard.PlanExecution(Connection);
+        return NativeErrors(() => plan.Execute(this));
+    }
     private static object? NativeErrors(Func<object?> execute)
     {
         try { return execute(); }
