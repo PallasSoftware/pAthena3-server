@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Ro3Emu.Server.Diagnostics;
 
 namespace Ro3Emu.Server.Accounts.Persistence;
@@ -11,6 +12,7 @@ public sealed class DbReadPool : IDisposable
     private readonly Queue<Job> _queue = new();
     private readonly Thread[] _threads = new Thread[WorkerCount];
     private readonly TaskCompletionSource[] _exited = new TaskCompletionSource[WorkerCount];
+    private readonly IDbContextFactory<GameDbContext>? _contexts;
     private readonly string _connectionString;
     private readonly DbAccessMetrics _metrics;
     private readonly ServerMetrics? _serverMetrics;
@@ -24,8 +26,9 @@ public sealed class DbReadPool : IDisposable
     private sealed record Job(DbReadPlan Plan, TaskCompletionSource<object?> Done);
 
     public DbReadPool(string databasePath, DbAccessMetrics metrics, ServerMetrics? serverMetrics = null, ILogger? log = null,
-        TimeSpan? stopTimeout = null)
+        TimeSpan? stopTimeout = null, IDbContextFactory<GameDbContext>? contexts = null)
     {
+        _contexts = contexts;
         _connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString();
         _metrics = metrics; _serverMetrics = serverMetrics; _log = log; _stopTimeout = stopTimeout ?? TimeSpan.FromSeconds(5);
         for (int i = 0; i < WorkerCount; i++)
@@ -96,7 +99,7 @@ public sealed class DbReadPool : IDisposable
                 {
                     DbWriteGuard.ReadPlan(db, job.Plan.Label);
                     using var tx = db.BeginTransaction(deferred: true);
-                    result = job.Plan.Execute(db, tx);
+                    result = job.Plan.Execute(db, tx, _contexts);
                     tx.Commit();
                     success = true;
                 }

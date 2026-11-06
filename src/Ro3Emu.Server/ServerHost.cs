@@ -1,4 +1,6 @@
 using Microsoft.Extensions.Options;
+using Microsoft.EntityFrameworkCore;
+using Ro3Emu.Server.Accounts.Persistence;
 using Ro3Emu.Server.Accounts;
 using Ro3Emu.Server.Game;
 using Ro3Emu.Server.Http;
@@ -11,7 +13,8 @@ namespace Ro3Emu.Server;
 /// <summary>Builds the whole emulator (HTTP + both gates); used by Program and by end-to-end tests.</summary>
 public static partial class ServerHost
 {
-    public static WebApplication Create(string[] args, Action<ServerOptions>? configure = null, TimeProvider? clock = null)
+    public static WebApplication Create(string[] args, Action<ServerOptions>? configure = null, TimeProvider? clock = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -55,6 +58,7 @@ public static partial class ServerHost
         // Starts before the loop: by then the host has built every hosted service and, through them, every ticker.
         builder.Services.AddHostedService<GameLoopTickers>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<GameLoop>());
+        builder.Services.AddDbContextFactory<GameDbContext>(o => o.UseSqlite());
         builder.Services.AddSingleton<AccountStore>();
         builder.Services.AddSingleton<RoleStore>();
         builder.Services.AddSingleton<Game.Ownership.OwnerRegistry>();
@@ -246,6 +250,7 @@ public static partial class ServerHost
         builder.Services.AddSingleton<GiftCodeLimiter>();
         builder.Services.AddSingleton<GiftCodeService>();
 
+        configureServices?.Invoke(builder.Services);
         var app = builder.Build();
         app.Lifetime.ApplicationStopping.Register(() => httpConnections.AbortAfter(HttpConnectionReaper.Grace));
         app.Services.GetRequiredService<RealmLock>();

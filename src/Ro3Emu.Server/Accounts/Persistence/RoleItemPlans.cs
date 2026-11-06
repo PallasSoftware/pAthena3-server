@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Collections.Frozen;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Ro3Emu.Server.Economy;
 
 namespace Ro3Emu.Server.Accounts.Persistence;
@@ -50,14 +51,16 @@ internal sealed class RoleItemPlan : DbPlan
         return [.. _parts.SelectMany((part, index) => part.MutatedEntityDeltaWrites(receipts[index])).Distinct()];
     }
 
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(SqliteConnection db, SqliteTransaction tx) => Execute(db, tx, null);
+
+    internal override object Execute(SqliteConnection db, SqliteTransaction tx, IDbContextFactory<GameDbContext>? contexts)
     {
-        foreach (var guard in _guards) { DbWriteGuard.Plan(db, guard); guard.Execute(db, tx); }
+        foreach (var guard in _guards) { DbWriteGuard.Plan(db, guard); guard.Execute(db, tx, contexts); }
         var receipts = new object?[_parts.Length];
         for (int i = 0; i < _parts.Length; i++)
         {
             DbWriteGuard.Plan(db, _parts[i]);
-            receipts[i] = _parts[i].Execute(db, tx);
+            receipts[i] = _parts[i].Execute(db, tx, contexts);
         }
         return receipts;
     }

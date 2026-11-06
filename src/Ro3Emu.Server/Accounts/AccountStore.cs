@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Ro3Emu.Server.Accounts.Persistence;
 using Ro3Emu.Server.Diagnostics;
@@ -50,7 +51,7 @@ public sealed partial class AccountStore : IDisposable
     private readonly Diagnostics.ServerMetrics? _metrics;
 
     public AccountStore(IOptions<ServerOptions> options, Diagnostics.ServerMetrics? metrics = null, Game.GameLoop? loop = null,
-        ILogger<AccountStore>? log = null)
+        ILogger<AccountStore>? log = null, IDbContextFactory<GameDbContext>? contexts = null)
     {
         _metrics = metrics;
         if (metrics != null) metrics.DbAccess = AccessMetrics;
@@ -112,9 +113,9 @@ public sealed partial class AccountStore : IDisposable
             );
             """;
         cmd.ExecuteNonQuery();
-        _writer = new(() => new DbWriter(_connectionString, AccessMetrics, _metrics, _log)
+        _writer = new(() => new DbWriter(_connectionString, AccessMetrics, _metrics, _log, contexts: contexts)
         { RoleWritesCommitted = Snapshots.Committed, Caches = Caches, StandingIssue = ReportStandingEconomyIssue });
-        _readers = new(() => new DbReadPool(_databasePath, AccessMetrics, _metrics, _log));
+        _readers = new(() => new DbReadPool(_databasePath, AccessMetrics, _metrics, _log, contexts: contexts));
         foreach (var plan in DatabaseSchema.Plans()) WriteSync<int>(plan);
     }
 

@@ -1,5 +1,6 @@
 using System.Collections.Frozen;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 
 namespace Ro3Emu.Server.Accounts.Persistence;
 
@@ -9,6 +10,8 @@ public abstract class DbPlan
     internal virtual string? OperationId => null;
     /// <summary>The plan owns replay and outcome resolution in its typed receipt table.</summary>
     internal virtual bool OwnsOperationReceipt => false;
+    internal virtual object? Execute(SqliteConnection connection, SqliteTransaction transaction,
+        IDbContextFactory<GameDbContext>? contexts) => Execute(connection, transaction);
     internal abstract object? Execute(SqliteConnection connection, SqliteTransaction transaction);
     internal abstract int Bytes { get; }
     internal abstract string Label { get; }
@@ -54,6 +57,8 @@ public abstract class DbPlan
 /// <summary>A detached snapshot query. The reader owns its connection and returns copied values.</summary>
 public abstract class DbReadPlan
 {
+    internal virtual object? Execute(SqliteConnection connection, SqliteTransaction transaction,
+        IDbContextFactory<GameDbContext>? contexts) => Execute(connection, transaction);
     internal abstract object? Execute(SqliteConnection connection, SqliteTransaction transaction);
     internal abstract int Bytes { get; }
     internal abstract string Label { get; }

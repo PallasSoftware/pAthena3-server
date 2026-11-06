@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Ro3Emu.Server.Diagnostics;
 using Ro3Emu.Server.Economy;
 
@@ -14,6 +15,7 @@ public sealed class DbWriter : IDisposable
     private readonly Queue<Job> _durable = new(), _lazy = new();
     private readonly Thread _thread;
     private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly IDbContextFactory<GameDbContext>? _contexts;
     private readonly string _connectionString;
     private readonly ServerMetrics? _serverMetrics;
     private readonly DbAccessMetrics _metrics;
@@ -30,8 +32,9 @@ public sealed class DbWriter : IDisposable
     private sealed record Job(DbPlan Plan, bool Lazy, TaskCompletionSource<object?> Done, long EnqueuedAt);
 
     public DbWriter(string connectionString, DbAccessMetrics metrics, ServerMetrics? serverMetrics = null, ILogger? log = null,
-        TimeSpan? stopTimeout = null)
+        TimeSpan? stopTimeout = null, IDbContextFactory<GameDbContext>? contexts = null)
     {
+        _contexts = contexts;
         _connectionString = connectionString;
         _metrics = metrics;
         _serverMetrics = serverMetrics;
@@ -226,7 +229,7 @@ public sealed class DbWriter : IDisposable
                     !OperationReceipts.TryRead(db, tx, id, out pending.Result)))
             {
                 var deltaRevisions = RevisionStore.Check(db, tx, plan);
-                pending.Result = plan.Execute(db, tx);
+                pending.Result = plan.Execute(db, tx, _contexts);
                 RevisionStore.Bump(db, tx, plan, pending.Result, deltaRevisions);
                 if (plan.OperationId != null && !plan.OwnsOperationReceipt)
                     OperationReceipts.Save(db, tx, plan, pending.Result);
