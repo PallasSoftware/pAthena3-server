@@ -20,6 +20,7 @@ internal static class DbWriteGuard
         internal readonly int Thread = Environment.CurrentManagedThreadId;
         internal string Source = source;
         internal bool RoleWriteAuthorized;
+        internal bool EfCommand;
     }
     private static readonly ConditionalWeakTable<SqliteConnection, State> States = [];
     private static readonly delegate_authorizer Authorizer = Authorize;
@@ -70,6 +71,17 @@ internal static class DbWriteGuard
         }
     }
 
+    internal static void EfCommand(System.Data.Common.DbConnection? connection, bool executing)
+    {
+        if (connection is SqliteConnection db && States.TryGetValue(db, out var state))
+            state.EfCommand = executing;
+    }
+
+    internal static void RefuseAsyncEfCommand(System.Data.Common.DbConnection? connection)
+    {
+        if (connection is SqliteConnection db && States.TryGetValue(db, out _))
+            throw new InvalidOperationException("Guarded worker EF commands must stay on their owning thread.");
+    }
     internal static void ReadPlan(SqliteConnection db, string label)
     {
         if (States.TryGetValue(db, out var state)) state.Source = label.Length <= 96 ? label : label[..96];
@@ -103,6 +115,13 @@ internal static class DbWriteGuard
             }
             if (!write) return raw.SQLITE_OK;
             int thread = Environment.CurrentManagedThreadId;
+            if (state.EfCommand && write
+                && (first.utf8_to_string() is "owner_revision" or "owner_operation_receipt"
+                    || action == raw.SQLITE_ALTER_TABLE && second.utf8_to_string() is "owner_revision" or "owner_operation_receipt"))
+            {
+                state.Metrics.WriteDenied(state.Source, action, first.utf8_to_string() ?? "", thread);
+                return raw.SQLITE_DENY;
+            }
             if (state.Mode == Access.Writer && action is raw.SQLITE_INSERT or raw.SQLITE_UPDATE or raw.SQLITE_DELETE
                 && (first.utf8_to_string() is "role" or "item") && !state.RoleWriteAuthorized)
             {

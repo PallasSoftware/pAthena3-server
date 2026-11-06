@@ -99,8 +99,10 @@ internal sealed class FamilyEconomyTransactionPlan(RoleItemPlan child, EconomyMu
         return true;
     }
 
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(DbPlanExecution execution)
     {
+        var db = execution.Connection;
+        var tx = execution.Transaction;
         ValidateShape();
         using (var owner = DbSql.Command(db, tx, "SELECT account FROM role WHERE id=$role"))
         {
@@ -112,7 +114,7 @@ internal sealed class FamilyEconomyTransactionPlan(RoleItemPlan child, EconomyMu
         using (var meta = DbSql.Command(db, tx, "SELECT realm_id FROM economy_meta WHERE singleton=1"))
             realm = meta.ExecuteScalar() as string ?? throw new InvalidDataException("Missing economy realm.");
         var before = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);
-        var receipts = (object?[])child.Execute(db, tx);
+        var receipts = (object?[])child.Execute(execution);
         ValidateResults(receipts);
         var after = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);
         var legs = BuildLegs(before, after);

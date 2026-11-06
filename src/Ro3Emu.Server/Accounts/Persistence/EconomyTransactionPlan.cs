@@ -86,8 +86,10 @@ internal sealed class EconomyTransactionPlan(RoleItemPlan child, EconomyMutation
         return false;
     }
 
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(DbPlanExecution execution)
     {
+        var db = execution.Connection;
+        var tx = execution.Transaction;
         ValidateShape();
         using (var owner = DbSql.Command(db, tx, "SELECT account FROM role WHERE id=$role"))
         {
@@ -98,7 +100,7 @@ internal sealed class EconomyTransactionPlan(RoleItemPlan child, EconomyMutation
         var before = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);
         EconomyRoleProgress? beforeProgress = mutation.RewardEvidence is null
             ? null : EconomyRoleProgressRead.Read(db, tx, mutation.ActorRoleId);
-        var receipts = (object?[])child.Execute(db, tx);
+        var receipts = (object?[])child.Execute(execution);
         ValidateChildReceipts(receipts, child.Parts[0] is ItemDeltaWritePlan committedDelta
             ? committedDelta.ExpectedReceiptCount : -1, mutation.CommandKind);
         var after = EconomyRoleAssetRead.Read(db, tx, mutation.ActorRoleId);

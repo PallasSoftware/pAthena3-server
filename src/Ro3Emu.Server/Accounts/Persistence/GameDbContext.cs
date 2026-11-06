@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace Ro3Emu.Server.Accounts.Persistence;
@@ -37,17 +37,39 @@ public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : DbC
         receipt.Property(row => row.Result).HasColumnName("result").IsRequired();
     }
 
-    /// <summary>Attach to exactly the existing native handle, without owning or committing its transaction.
-    /// A fresh context per plan also discards tracked state after savepoint rollback.</summary>
-    internal static GameDbContext Borrow(SqliteConnection connection, SqliteTransaction transaction,
-        IDbContextFactory<GameDbContext>? factory = null)
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+        optionsBuilder.AddInterceptors(new EfCoordinationGuard());
+
+    private void ValidateWrites()
     {
-        var context = factory?.CreateDbContext() ?? new GameDbContext(
-            new DbContextOptionsBuilder<GameDbContext>().UseSqlite().Options);
+        ChangeTracker.DetectChanges();
+        if (ChangeTracker.Entries().Any(entry => entry.Entity is OwnerRevisionRow or OwnerReceiptRow
+            && entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Revisions and receipts belong to the transaction coordinator, not EF plans.");
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        ValidateWrites();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        ValidateWrites();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    /// <summary>Enlist without creating a provider or owning the worker's transaction.</summary>
+    internal static GameDbContext Borrow(DbConnection connection, DbTransaction transaction,
+        IDbContextFactory<GameDbContext> factory)
+    {
+        var context = factory.CreateDbContext();
         try
         {
             context.Database.SetDbConnection(connection, contextOwnsConnection: false);
             context.Database.UseTransaction(transaction);
+            context.Database.AutoSavepointsEnabled = false;
             return context;
         }
         catch { context.Dispose(); throw; }

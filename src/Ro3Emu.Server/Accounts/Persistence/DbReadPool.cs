@@ -99,7 +99,8 @@ public sealed class DbReadPool : IDisposable
                 {
                     DbWriteGuard.ReadPlan(db, job.Plan.Label);
                     using var tx = db.BeginTransaction(deferred: true);
-                    result = job.Plan.Execute(db, tx, _contexts);
+                    using var execution = new DbPlanExecution(db, tx, _contexts);
+                    result = execution.Run(job.Plan);
                     tx.Commit();
                     success = true;
                 }

@@ -80,8 +80,10 @@ internal sealed class EventEconomyTransactionPlan(RoleItemPlan child, EventEcono
         return false;
     }
 
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(DbPlanExecution execution)
     {
+        var db = execution.Connection;
+        var tx = execution.Transaction;
         if (mutation.ActorRoleId > 0)
         {
             using var actor = DbSql.Command(db, tx, "SELECT account FROM role WHERE id=$role");
@@ -92,7 +94,7 @@ internal sealed class EventEconomyTransactionPlan(RoleItemPlan child, EventEcono
         var entities = EntityWrites.Concat(EntityDeltaWrites).Distinct().ToArray();
         var entityBefore = entities.Select(key => (OwnerRevisionValue)new OwnerRevisionReadPlan(key).Execute(db, tx)).ToArray();
         var before = EconomySnapshotReader.ReadEventHoldings(db, tx, mutation.Catalog, RoleWrites, entities);
-        var result = (object?[])child.Execute(db, tx);
+        var result = (object?[])child.Execute(execution);
         var after = EconomySnapshotReader.ReadEventHoldings(db, tx, mutation.Catalog, RoleWrites, entities);
         var legs = BuildLegs(before, after, mutation);
         if (legs.Count == 0) throw new InvalidOperationException("Event economy envelope must explain an economic movement.");

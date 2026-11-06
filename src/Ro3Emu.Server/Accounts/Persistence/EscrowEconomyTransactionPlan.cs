@@ -40,8 +40,10 @@ internal sealed class EscrowEconomyTransactionPlan(RoleItemPlan child, EscrowEco
         return replay;
     }
 
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(DbPlanExecution execution)
     {
+        var db = execution.Connection;
+        var tx = execution.Transaction;
         ValidateShape();
         if (intent.ActorRoleId > 0)
         {
@@ -55,7 +57,7 @@ internal sealed class EscrowEconomyTransactionPlan(RoleItemPlan child, EscrowEco
             realm = meta.ExecuteScalar() as string ?? throw new InvalidDataException("Missing E03 economy realm.");
         var scope = Scope(null);
         var before = EconomySnapshotReader.ReadEscrowScope(db, tx, scope, catalog);
-        var receipts = (object?[])child.Execute(db, tx);
+        var receipts = (object?[])child.Execute(execution);
         EscrowEconomyReceiptCodec.Validate(child, receipts);
         var expanded = Scope(receipts);
         var after = EconomySnapshotReader.ReadEscrowScope(db, tx, expanded, catalog);

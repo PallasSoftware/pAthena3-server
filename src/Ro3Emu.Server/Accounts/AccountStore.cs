@@ -53,6 +53,7 @@ public sealed partial class AccountStore : IDisposable
     public AccountStore(IOptions<ServerOptions> options, Diagnostics.ServerMetrics? metrics = null, Game.GameLoop? loop = null,
         ILogger<AccountStore>? log = null, IDbContextFactory<GameDbContext>? contexts = null)
     {
+        contexts ??= new SqliteGameContextFactory(); // Explicit SQLite composition for directly constructed stores.
         _metrics = metrics;
         if (metrics != null) metrics.DbAccess = AccessMetrics;
         _loop = loop;

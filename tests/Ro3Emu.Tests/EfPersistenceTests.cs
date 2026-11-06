@@ -149,9 +149,9 @@ public sealed class EfPersistenceTests : IDisposable
     {
         internal override int Bytes => 1;
         internal override string Label => "test/ef-read-mutation";
-        internal override object Execute(SqliteConnection connection, SqliteTransaction transaction)
+        internal override object Execute(DbPlanExecution execution)
         {
-            using var context = GameDbContext.Borrow(connection, transaction);
+            var context = execution.Game;
             return RealmStatePersistence.Write(context, "forbidden", "value");
         }
     }
@@ -160,9 +160,9 @@ public sealed class EfPersistenceTests : IDisposable
     {
         internal override int Bytes => 1;
         internal override string Label => "test/ef-undeclared-mutation";
-        internal override object Execute(SqliteConnection connection, SqliteTransaction transaction)
+        internal override object Execute(DbPlanExecution execution)
         {
-            using var context = GameDbContext.Borrow(connection, transaction);
+            var context = execution.Game;
             return context.Database.ExecuteSqlRaw("UPDATE role SET level=2");
         }
     }
@@ -171,10 +171,115 @@ public sealed class EfPersistenceTests : IDisposable
     public async Task EfCannotBypassTheNativeReadOnlyAndRoleMutationAuthorizers()
     {
         using var store = Store();
-        var read = await Assert.ThrowsAsync<DbUpdateException>(() => store.ReadAsync<int>(new ReadWrite()));
-        Assert.Equal(23, Assert.IsType<SqliteException>(read.InnerException).SqliteErrorCode);
+        var read = await Assert.ThrowsAsync<SqliteException>(() => store.ReadAsync<int>(new ReadWrite()));
+        Assert.Equal(23, read.SqliteErrorCode);
         var write = await Assert.ThrowsAsync<SqliteException>(() => store.WriteAsync<int>(new UndeclaredWrite()));
         Assert.Equal(23, write.SqliteErrorCode);
+    }
+
+    [Fact]
+    public async Task MissingWorkerFactoryRefusesEfInsteadOfSelectingSqlite()
+    {
+        using var store = Store();
+        using var writer = new DbWriter("Data Source=" + store.DatabasePath, new DbAccessMetrics());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => writer.ExecuteAsync<int>(
+            new SeasonStateWritePlan("missing-factory", "never")));
+        using var readers = new DbReadPool(store.DatabasePath, new DbAccessMetrics());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => readers.ExecuteAsync<string?>(
+            new SeasonStateReadPlan("missing-factory")));
+    }
+
+    private sealed class ForbiddenCoordination(string mutation) : DbPlan
+    {
+        internal override int Bytes => 1;
+        internal override string Label => "test/ef-coordination-denied";
+        internal override object Execute(DbPlanExecution execution)
+        {
+            var context = execution.Game;
+            switch (mutation)
+            {
+                case "tracked-revision":
+                    context.OwnerRevisions.Add(new OwnerRevisionRow { Kind = "bad", Id = "bad", Part = "state", Revision = 1 });
+                    return context.SaveChanges();
+                case "tracked-receipt":
+                    context.OwnerReceipts.Add(new OwnerReceiptRow { OperationId = "bad", Family = "bad", Result = [1] });
+                    return context.SaveChanges();
+                case "bulk-revision": return context.OwnerRevisions.ExecuteDelete();
+                case "bulk-receipt": return context.OwnerReceipts.ExecuteDelete();
+                case "raw-revision": return context.Database.ExecuteSqlRaw("DELETE FROM owner_revision");
+                case "raw-receipt": return context.Database.ExecuteSqlRaw("DELETE FROM owner_operation_receipt");
+                default: throw new InvalidOperationException("Unknown test mutation.");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("tracked-revision")]
+    [InlineData("tracked-receipt")]
+    [InlineData("bulk-revision")]
+    [InlineData("bulk-receipt")]
+    [InlineData("raw-revision")]
+    [InlineData("raw-receipt")]
+    public async Task EfCannotWriteCoordinatorTablesThroughTrackingBulkOrRawSql(string mutation)
+    {
+        using var store = Store();
+        await Write(store, "before");
+        long before = Revision(store).Revision;
+        var error = await Record.ExceptionAsync(() => store.WriteAsync<int>(new ForbiddenCoordination(mutation)));
+        Assert.NotNull(error);
+        if (mutation.StartsWith("tracked-", StringComparison.Ordinal)) Assert.IsType<InvalidOperationException>(error);
+        else Assert.Equal(23, Assert.IsType<SqliteException>(error).SqliteErrorCode);
+        Assert.Equal(before, Revision(store).Revision);
+        Assert.Equal(1, await Write(store, "after")); // failed EF permissions must not leak into coordinator writes
+        Assert.Equal(before + 1, Revision(store).Revision);
+    }
+
+    [Fact]
+    public async Task EconomyEnvelopeUsesTheRegisteredFactoryAndRollsBackAllChildrenOnEfFailure()
+    {
+        var probe = new SaveProbe();
+        var factory = new ProbeFactory(probe);
+        using var store = Store(factory);
+        var roles = new RoleStore(store);
+        long role = roles.Create("invented-owner", 1, "EfEnvelope", 1, 1000, 1)!.Id;
+        EconomyEnvelopePlan Plan(string operation)
+        {
+            var child = new RoleItemPlan([new SeasonStateWritePlan("season_id", "1"),
+                new SeasonStateWritePlan("playbook", "2")], "test/ef-child");
+            // Integration fixture only: season writes are deliberately not added to the production
+            // economy intent allowlist. The envelope still executes its real transaction/receipt logic.
+            var envelope = new Ro3Emu.Server.Economy.EconomyEnvelope(operation, "invented-owner", role,
+                "ef-metadata", "invented-intent", operation + ":source", 1000, [], [1]).BindChildIntent([1]);
+            var plan = new EconomyEnvelopePlan(child, envelope, store.EconomyCatalog);
+            plan.ExpectEntities(child.EntityWrites.Select(key => store.ReadSync<OwnerRevisionValue>(new OwnerRevisionReadPlan(key))));
+            return plan;
+        }
+        probe.FailAfterSave = true;
+        probe.FailOnSave = 2;
+        await Assert.ThrowsAsync<IOException>(() => store.WriteAsync<object?[]>(Plan("rollback")));
+        Assert.Equal(1, factory.Created); // both EF children shared exactly one context
+        Assert.Null(await store.ReadAsync<string?>(new SeasonStateReadPlan("playbook")));
+        Assert.False(store.ReadSync<OwnerRevisionValue>(new OwnerRevisionReadPlan(RevisionStore.Entity("server_state", "playbook"))).Exists);
+        probe.FailAfterSave = false;
+        var plan = Plan("commit");
+        await store.WriteAsync<object?[]>(plan);
+        Assert.Equal("2", await store.ReadAsync<string?>(new SeasonStateReadPlan("playbook")));
+        Assert.Equal(1, store.ReadSync<OwnerRevisionValue>(new OwnerRevisionReadPlan(RevisionStore.Entity("server_state", "playbook"))).Revision);
+    }
+
+    [Fact]
+    public async Task EconomyEnvelopeCannotBypassARefusingFactory()
+    {
+        using var store = Store(new RefusingFactory());
+        var roles = new RoleStore(store);
+        long role = roles.Create("invented-owner", 1, "RefuseEf", 1, 1000, 1)!.Id;
+        var child = new RoleItemPlan([new SeasonStateWritePlan("invented-season", "never")], "test/ef-child");
+        var envelope = new Ro3Emu.Server.Economy.EconomyEnvelope("refused", "invented-owner", role,
+            "ef-metadata", "invented-intent", "refused:source", 1000, [], [1]).BindChildIntent([1]);
+        var plan = new EconomyEnvelopePlan(child, envelope, store.EconomyCatalog);
+        plan.ExpectEntities([Revision(store)]);
+        await Assert.ThrowsAsync<IOException>(() => store.WriteAsync<object?[]>(plan));
+        Assert.False(Revision(store).Exists);
     }
 
     private sealed class ProbeFactory(SaveProbe probe) : IDbContextFactory<GameDbContext>
@@ -184,7 +289,7 @@ public sealed class EfPersistenceTests : IDisposable
         public GameDbContext CreateDbContext()
         {
             Interlocked.Increment(ref _created);
-            return new(new DbContextOptionsBuilder<GameDbContext>().UseSqlite().AddInterceptors(probe).Options);
+            return new(new DbContextOptionsBuilder<GameDbContext>().UseSqlite().AddInterceptors(probe, new NoEfSavepoints()).Options);
         }
     }
 
@@ -193,6 +298,11 @@ public sealed class EfPersistenceTests : IDisposable
         public GameDbContext CreateDbContext() => throw new IOException("Invented EF factory failure.");
     }
 
+    private sealed class NoEfSavepoints : DbTransactionInterceptor
+    {
+        public override InterceptionResult CreatingSavepoint(DbTransaction transaction, TransactionEventData eventData,
+            InterceptionResult result) => throw new InvalidOperationException("Only the writer may create savepoints.");
+    }
     private sealed class SaveProbe : SaveChangesInterceptor
     {
         private int _saves;
@@ -203,6 +313,7 @@ public sealed class EfPersistenceTests : IDisposable
         public override int SavedChanges(SaveChangesCompletedEventData eventData, int result)
         {
             Enlisted = eventData.Context!.Database.CurrentTransaction is not null;
+            Assert.False(eventData.Context.Database.AutoSavepointsEnabled);
             int count = Interlocked.Increment(ref _saves);
             if (FailAfterSave && count >= FailOnSave) throw new IOException("Invented failure after EF SQL.");
             return result;

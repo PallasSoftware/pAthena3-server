@@ -229,7 +229,8 @@ public sealed class DbWriter : IDisposable
                     !OperationReceipts.TryRead(db, tx, id, out pending.Result)))
             {
                 var deltaRevisions = RevisionStore.Check(db, tx, plan);
-                pending.Result = plan.Execute(db, tx, _contexts);
+                using var execution = new DbPlanExecution(db, tx, _contexts);
+                pending.Result = execution.Run(plan);
                 RevisionStore.Bump(db, tx, plan, pending.Result, deltaRevisions);
                 if (plan.OperationId != null && !plan.OwnsOperationReceipt)
                     OperationReceipts.Save(db, tx, plan, pending.Result);

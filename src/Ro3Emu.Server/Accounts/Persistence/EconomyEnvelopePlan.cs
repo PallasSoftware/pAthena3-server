@@ -69,8 +69,10 @@ internal sealed class EconomyEnvelopePlan(RoleItemPlan child, EconomyEnvelope en
         return false;
     }
 
-    internal override object Execute(SqliteConnection db, SqliteTransaction tx)
+    internal override object Execute(DbPlanExecution execution)
     {
+        var db = execution.Connection;
+        var tx = execution.Transaction;
         if (!envelope.HasChildIntent) throw new InvalidOperationException("E05d typed child intent was not bound.");
         if (child.ChildCount == 0) throw new InvalidOperationException("E05d envelope needs a typed child plan.");
         using (var owner = DbSql.Command(db, tx, "SELECT account FROM role WHERE id=$role"))
@@ -87,7 +89,7 @@ internal sealed class EconomyEnvelopePlan(RoleItemPlan child, EconomyEnvelope en
         var generatedEntities = new HashSet<OwnerRevisionKey>();
         var (before, standing) = Read(db, tx);
         foreach (var issue in standing) DbWriter.ReportStandingIssue(issue);
-        var children = (object?[])child.Execute(db, tx);
+        var children = (object?[])child.Execute(execution);
         EconomyTransactionPlan.EncodeChildReceipts(children); // Reject any non-durable child result before receipt work.
         // Guild creation obtains its owner ID inside the writer. Its initial revision is inserted by
         // GuildSavePlan, rather than by RevisionStore.Bump, so record that creation explicitly.
