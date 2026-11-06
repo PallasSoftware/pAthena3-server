@@ -1,5 +1,6 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace Ro3Emu.Server.Accounts.Persistence;
 
@@ -7,6 +8,10 @@ namespace Ro3Emu.Server.Accounts.Persistence;
 /// Runtime contexts borrow the writer/reader's guarded connection and transaction; migrations run offline.</summary>
 public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : DbContext(options)
 {
+    private WorkerDatabaseFacade? _database;
+    public override DatabaseFacade Database => _database ??= new WorkerDatabaseFacade(this);
+    internal bool BorrowsWorkerTransaction { get; private set; }
+
     public DbSet<RealmStateRow> RealmState => Set<RealmStateRow>();
     public DbSet<OwnerRevisionRow> OwnerRevisions => Set<OwnerRevisionRow>();
     public DbSet<OwnerReceiptRow> OwnerReceipts => Set<OwnerReceiptRow>();
@@ -74,6 +79,7 @@ public sealed class GameDbContext(DbContextOptions<GameDbContext> options) : DbC
         {
             context.Database.SetDbConnection(connection, contextOwnsConnection: false);
             context.Database.UseTransaction(transaction);
+            context.BorrowsWorkerTransaction = true;
             context.Database.AutoSavepointsEnabled = false;
             return context;
         }

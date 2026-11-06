@@ -18,7 +18,8 @@ public sealed class EfTransactionOwnershipTests : IDisposable
         "commit-async", "rollback-async", "save-async", "rollback-save-async", "release-save-async",
         "native-commit", "native-rollback", "native-save", "native-rollback-save", "native-release-save", "native-dispose",
         "native-commit-async", "detach-begin", "dispose-begin", "raw-commit", "raw-end", "raw-rollback",
-        "raw-save", "raw-rollback-save", "raw-release-save", "raw-begin", "prepared-commit"
+        "raw-save", "raw-rollback-save", "raw-release-save", "raw-begin", "prepared-commit",
+        "ensure-created", "ensure-deleted", "ensure-created-async", "ensure-deleted-async"
     }.SelectMany<string, object[]>(mode => [[mode, false], [mode, true]]);
 
     private sealed class Attack(string mode, bool swallow) : DbPlan
@@ -50,6 +51,10 @@ public sealed class EfTransactionOwnershipTests : IDisposable
         var native = tx.GetDbTransaction();
         switch (mode)
         {
+            case "ensure-created": context.Database.EnsureCreated(); break;
+            case "ensure-deleted": context.Database.EnsureDeleted(); break;
+            case "ensure-created-async": context.Database.EnsureCreatedAsync().GetAwaiter().GetResult(); break;
+            case "ensure-deleted-async": context.Database.EnsureDeletedAsync().GetAwaiter().GetResult(); break;
             case "commit": context.Database.CommitTransaction(); break;
             case "rollback": context.Database.RollbackTransaction(); break;
             case "tx-commit": tx.Commit(); break;
