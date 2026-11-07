@@ -104,15 +104,21 @@ public sealed class DbReadPool : IDisposable
                     tx.Commit();
                     success = true;
                 }
-                catch (Exception caught) { error = caught; }
+                catch (Exception caught) { error = caught; success = false; }
+                try { DbWriteGuard.RollbackOrphanedTransaction(db); }
+                catch (Exception cleanup)
+                {
+                    success = false;
+                    error = error is null ? cleanup : new AggregateException(error, cleanup);
+                    throw; // Terminal worker failure still closes admission and fails queued work.
+                }
                 finally
                 {
-                    DbWriteGuard.RollbackOrphanedTransaction(db);
                     lock (_gate) _active[worker] = null;
                     _metrics.ReaderFinished(success);
+                    if (error is null) job.Done.TrySetResult(result);
+                    else job.Done.TrySetException(error);
                 }
-                if (error is null) job.Done.TrySetResult(result);
-                else job.Done.TrySetException(error);
             }
         }
         catch (Exception error)
