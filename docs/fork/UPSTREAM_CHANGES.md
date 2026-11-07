@@ -2,6 +2,46 @@
 
 This is maintained fork documentation on `poc/persistence-provider-abstraction`, intended for an approved `develop`. It must not be merged into the clean upstream mirror `main`. It describes supported boundaries, not an operational rollout. See [UPSTREAM_SYNC.md](UPSTREAM_SYNC.md) for branch ownership and promotion gates.
 
+## B1 follow-up and reader cleanup
+
+Executable checkpoint: `db28471286b389b3fc3b659d99966aef3cbaf40d`, following B1 `370edac5c02f09e7a21e8fa178951fdef7819877`. These two commits are mandatory dependencies of the initial EF hardening. The original 4f0c5f4/e7dbcbf evidence and aggregate figures below are historical checkpoints, not the current complete fork delta. Current history has ten executable fork commits on b150456, plus maintained documentation commits; the 228 upstream-only commits remain unintegrated.
+
+### 370edac5c02f09e7a21e8fa178951fdef7819877
+
+Guard deferred EF reader statements through advancement and disposal. SQLite can prepare/execute later statements during NextResult or Close/Dispose, after ReaderExecuted. Clearing the command tag at ReaderExecuted was therefore insufficient. A borrowed runtime reader now scopes the existing native EF flags around Read, NextResult and cleanup, restoring their prior values on exceptions. No new process/global/ambient state is introduced. SaveChanges authority follows the command's actual validated source; raw queries cannot borrow that authority. Offline/standalone readers are unchanged.
+
+Close explicitly advances remaining results before the provider's final Close, all under the same native scope. This is necessary because SqliteDataReader.Close suppresses late errors. Authorization errors now reach the caller; finally closes the provider reader while protection remains active. DbDataReader's normal Dispose, DisposeAsync and CloseAsync dispatch through this guarded Close. Async runtime advancement remains refused. N1's native transaction fence and existing writer savepoints are unchanged.
+
+| File | Added | Removed |
+| --- | ---: | ---: |
+| src/Ro3Emu.Server/Accounts/Persistence/DbWriteGuard.cs | 25 | 0 |
+| src/Ro3Emu.Server/Accounts/Persistence/EfCoordinationGuard.cs | 6 | 1 |
+| src/Ro3Emu.Server/Accounts/Persistence/EfGuardedReader.cs (new) | 68 | 0 |
+| tests/Ro3Emu.Tests/EfReaderGuardTests.cs (new) | 140 | 0 |
+
+Required regressions: actual AccountStore/DbWriter EF integration with SELECT followed by CREATE TABLE, revision update, receipt update or undeclared server_state update; FromSqlRaw early enumeration disposal and EF relational NextResult/Close/Dispose/DisposeAsync. Each attack both aborts and catches/continues; assert native denials, unchanged victim data/revision/receipt/schema, correct own receipt/revision and healthy subsequent work. Normal reads, same-value writes and read-only batches must pass. Re-run existing N1 tests, ReceiptFieldNamesTests, DbWriterFaultTests, full synthetic engine, deploy migration/provider/host tests and extensions.
+
+An external wrapper cannot use the internal authorizer's authority without a new engine hook; replacing the native authorizer or copying its rules into deploy weakens the boundary. SQL regex/semicolon rejection is not a SQLite parser or an authority boundary. The selected change extends the already necessary internal EF/native adapter, with no gameplay edits or broad command/provider abstraction. Review this small safety commit independently upstream, together with its existing adapter prerequisite.
+
+### db28471286b389b3fc3b659d99966aef3cbaf40d
+
+Complete active reader jobs when transaction cleanup fails. An exception in native cleanup previously skipped the dequeued job's completion; the outer worker only failed queued jobs, leaving its caller waiting forever. Cleanup now has a completion finally that updates active/metrics and completes this job even when cleanup throws. Execution and cleanup errors are preserved together. The cleanup exception still reaches the terminal worker handler: no unhealthy connection reuse, retry or false success. Already active work on the other reader retains its existing completion semantics; queued and future work fail closed.
+
+| File | Added | Removed |
+| --- | ---: | ---: |
+| src/Ro3Emu.Server/Accounts/Persistence/DbReadPool.cs | 10 | 4 |
+| tests/Ro3Emu.Tests/DbReadCleanupTests.cs (new) | 67 | 0 |
+
+Required regression: occupy both real reader workers, queue another job, deliberately lose one disposable test connection, require the dequeued task to fault within a bounded wait with both errors, queued work to fault, future admission to refuse and workers to exit after releasing the other job. The test temporarily replaces only its own reader's native authorizer to simulate a fully closed connection inside the N1 fence; no production fault hook or guard change is added. Initial and revised safety checks use synthetic data only.
+
+The private dequeued Job/task and terminal reader loop cannot safely be repaired from deploy. The 10/-4 local worker change is smaller than changing the pool model or exposing fault-injection/public task-control APIs.
+
+### Additional merge surface
+
+Relative to e7dbcbf, these executable commits change six files, +316/-5. Three pre-existing-at-checkpoint files account for +41/-5; three new files add 275 lines (68 adapter, 207 tests). Only two original upstream paths change again: DbWriteGuard (+25/-0) and DbReadPool (+10/-4). EfCoordinationGuard was already a new fork file. Thus original-upstream impact is +35/-4, with zero newly touched original paths; the total count of changed original upstream files remains 18. Economy wrappers, RoleItemPlans, DbWriter, RevisionStore, receipts, migrations and plan identities are unchanged this round. Documentation updates are separate from these executable figures.
+
+Preliminary focused evidence: 42 new integration checks passed, including the cleanup-failure regression; folder-only whitespace verification passed. The official exact-pin focused/full/provider/extension reruns and final complete totals are recorded in pAthena3-deploy's docs/persistence-ef-hardening.md. A narrow initial reproduction failed 41 of 42 tests on the old code; final tests additionally assert native denial counters and explicitly preserve swallowed-disposal-error semantics through the adapter.
+
 ## Fixed provenance
 
 - Upstream: `https://github.com/aethai/ro3emu-server`.
@@ -9,7 +49,7 @@ This is maintained fork documentation on `poc/persistence-provider-abstraction`,
 - Original tested upstream baseline: `b1504562913fd5716a3168e99ac89713cd66254d`.
 - First EF checkpoint: `e5215176a23c38ca13d6c7238abe4780014d4dc8`.
 - Remediation checkpoint: `36cad1e1dd4084b69535ef946e0fd67989af8c52`.
-- Last executable hardening checkpoint: `4f0c5f4ea70b5383ca8e609e0277fd58aa17dd33`. The subsequent fork-documentation commit changes Markdown only.
+- Initial executable hardening checkpoint: `4f0c5f4ea70b5383ca8e609e0277fd58aa17dd33`. The subsequent e7dbcbf fork-documentation commit changes Markdown only; the B1 follow-up below adds two executable commits.
 - Deploy code checkpoint: `34fde7da65be32b3fce78dda54e7105f01ecd956`, branch/worktree `poc/persistence-provider-abstraction`, `/Users/marco/Projects/pAthena3-deploy-persistence-poc`.
 
 Remote observations on 7 November 2026: fork `main` and upstream `main` both resolve to `4559db162df0ef0739ca58690e5a64164ccf4fb9`; GitHub's exact-commit comparison reports identical, zero ahead/behind. Local engine `main` and `origin/main` agree. Neither local nor remote `develop` exists. `git ls-remote --heads origin main develop` completed successfully and returned only main. No fetch, branch/ref update or sync was performed. Observations must be refreshed before future promotion.
