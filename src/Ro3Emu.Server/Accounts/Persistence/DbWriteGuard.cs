@@ -118,6 +118,31 @@ internal static class DbWriteGuard
         }
     }
 
+    /// <summary>Reader advancement and disposal can prepare more SQL. Restore the previous command
+    /// flags on every exit, without borrowing authority for the lifetime of an open reader.</summary>
+    internal static IDisposable EfReader(System.Data.Common.DbConnection? connection, bool tracked)
+    {
+        State? state = null;
+        if (connection is SqliteConnection db) States.TryGetValue(db, out state);
+        return new ReaderScope(state, tracked);
+    }
+    private sealed class ReaderScope : IDisposable
+    {
+        private State? _state;
+        private readonly bool _command, _tracked;
+        internal ReaderScope(State? state, bool tracked)
+        {
+            _state = state;
+            if (state is null) return;
+            _command = state.EfCommand; _tracked = state.EfTrackedSave;
+            state.EfCommand = true; state.EfTrackedSave = tracked;
+        }
+        public void Dispose()
+        {
+            if (_state is not { } state) return;
+            state.EfCommand = _command; state.EfTrackedSave = _tracked; _state = null;
+        }
+    }
     internal static void RefuseAsyncEfCommand(System.Data.Common.DbConnection? connection)
     {
         if (connection is SqliteConnection db && States.TryGetValue(db, out _))

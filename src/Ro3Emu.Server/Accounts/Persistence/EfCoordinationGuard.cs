@@ -23,7 +23,12 @@ internal sealed class EfCoordinationGuard : DbCommandInterceptor
         InterceptionResult<object> result)
     { Begin(command, eventData); return result; }
     public override DbDataReader ReaderExecuted(DbCommand command, CommandExecutedEventData eventData, DbDataReader result)
-    { DbWriteGuard.EfCommand(command.Connection, false); return result; }
+    {
+        DbWriteGuard.EfCommand(command.Connection, false);
+        return eventData.Context is GameDbContext { BorrowsWorkerTransaction: true }
+            ? new EfGuardedReader(result, command.Connection, eventData.CommandSource == CommandSource.SaveChanges)
+            : result;
+    }
     public override int NonQueryExecuted(DbCommand command, CommandExecutedEventData eventData, int result)
     { DbWriteGuard.EfCommand(command.Connection, false); return result; }
     public override object? ScalarExecuted(DbCommand command, CommandExecutedEventData eventData, object? result)
